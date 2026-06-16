@@ -5,11 +5,21 @@ Write-Host "║       ESPANSO SETUP - WINDOWS        ║" -ForegroundColor Cyan
 Write-Host "╚══════════════════════════════════════╝" -ForegroundColor Cyan
 Write-Host ""
 
-$GITHUB_USER = "mdragusm"
-$REPO = "espanso_sync"
 $DOTFILES = "$env:USERPROFILE\dotfiles"
 $ESPANSO_MATCH = "$env:APPDATA\espanso\match"
 $ESPANSO_CONFIG = "$env:APPDATA\espanso\config"
+
+# ── 0. Developer Mode check ───────────────────────────────────────────────────
+$devMode = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" -ErrorAction SilentlyContinue).AllowDevelopmentWithoutDevLicense
+if ($devMode -ne 1) {
+    Write-Host "⚠  Developer Mode is not enabled." -ForegroundColor Yellow
+    Write-Host "   Symlinks require Developer Mode on Windows." -ForegroundColor Yellow
+    Write-Host "   Enable it at: Settings → System → For developers → Developer Mode" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "   Opening settings now..." -ForegroundColor Yellow
+    Start-Process "ms-settings:developers"
+    Read-Host "  Press Enter once Developer Mode is enabled"
+}
 
 # ── 1. Install dependencies ───────────────────────────────────────────────────
 Write-Host "▶ Installing Git..." -ForegroundColor Yellow
@@ -24,14 +34,43 @@ Write-Host "▶ Installing Python..." -ForegroundColor Yellow
 winget install --id Python.Python.3 -e --silent --accept-source-agreements --accept-package-agreements
 Write-Host "  ✓ Python installed" -ForegroundColor Green
 
-# Refresh PATH so pip is available
+# Refresh PATH so git/python/pip are available
 $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
 
 Write-Host "▶ Installing PyYAML..." -ForegroundColor Yellow
 pip install pyyaml --quiet
 Write-Host "  ✓ PyYAML installed" -ForegroundColor Green
 
-# ── 2. SSH key ────────────────────────────────────────────────────────────────
+# ── 2. GitHub repo ────────────────────────────────────────────────────────────
+Write-Host ""
+Write-Host "▶ GitHub repo setup..." -ForegroundColor Yellow
+
+# If run from inside a cloned repo, detect the remote automatically
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$RemoteUrl = ""
+if (Test-Path "$ScriptDir\.git") {
+    $RemoteUrl = git -C $ScriptDir remote get-url origin 2>$null
+}
+
+if ($RemoteUrl) {
+    # Extract user/repo from remote URL (handles both https and ssh)
+    if ($RemoteUrl -match "[:/]([^/]+)/([^/]+?)(\.git)?$") {
+        $GITHUB_USER = $Matches[1]
+        $REPO = $Matches[2]
+    }
+    Write-Host "  Detected repo: $GITHUB_USER/$REPO" -ForegroundColor Gray
+    $Confirm = Read-Host "  Use this? [Y/n]"
+    if ($Confirm -match "^[Nn]$") { $RemoteUrl = "" }
+}
+
+if (-not $RemoteUrl) {
+    $GITHUB_USER = Read-Host "  Your GitHub username"
+    $REPO = Read-Host "  Repo name (e.g. espanso_sync)"
+}
+
+Write-Host "  ✓ Will clone: $GITHUB_USER/$REPO" -ForegroundColor Green
+
+# ── 3. SSH key ────────────────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "▶ Setting up SSH key..." -ForegroundColor Yellow
 if (-not (Test-Path "$env:USERPROFILE\.ssh\id_ed25519")) {
@@ -54,7 +93,7 @@ Start-Process "https://github.com/settings/ssh/new"
 Write-Host ""
 Read-Host "  Press Enter once you've added the key to GitHub"
 
-# ── 3. Test SSH ───────────────────────────────────────────────────────────────
+# ── 4. Test SSH ───────────────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "▶ Testing GitHub connection..." -ForegroundColor Yellow
 $sshTest = ssh -T git@github.com 2>&1
@@ -65,7 +104,7 @@ if ($sshTest -match "successfully authenticated") {
     exit 1
 }
 
-# ── 4. Clone repo ─────────────────────────────────────────────────────────────
+# ── 5. Clone repo ─────────────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "▶ Cloning repo..." -ForegroundColor Yellow
 if (Test-Path "$DOTFILES\.git") {
@@ -76,20 +115,28 @@ if (Test-Path "$DOTFILES\.git") {
 }
 Write-Host "  ✓ Done" -ForegroundColor Green
 
-# ── 5. Symlink ────────────────────────────────────────────────────────────────
+# ── 6. Symlinks ───────────────────────────────────────────────────────────────
 Write-Host ""
-Write-Host "▶ Setting up symlink..." -ForegroundColor Yellow
-if (Test-Path "$ESPANSO_MATCH\base.yml") {
-    $item = Get-Item "$ESPANSO_MATCH\base.yml" -Force
-    if ($item.LinkType -ne "SymbolicLink") {
-        Move-Item "$ESPANSO_MATCH\base.yml" "$ESPANSO_MATCH\base.yml.bak"
-        Write-Host "  Backed up existing base.yml" -ForegroundColor Gray
+Write-Host "▶ Setting up symlinks..." -ForegroundColor Yellow
+if (-not (Test-Path $ESPANSO_MATCH)) { New-Item -ItemType Directory -Path $ESPANSO_MATCH | Out-Null }
+Get-ChildItem "$DOTFILES\*.yml" | ForEach-Object {
+    $yml = $_.FullName
+    $fname = $_.Name
+    $link = "$ESPANSO_MATCH\$fname"
+    if (Test-Path $link) {
+        $item = Get-Item $link -Force
+        if ($item.LinkType -ne "SymbolicLink") {
+            Move-Item $link "$link.bak"
+            Write-Host "  Backed up existing $fname" -ForegroundColor Gray
+        } else {
+            Remove-Item $link -Force
+        }
     }
+    cmd /c mklink "$link" "$yml" | Out-Null
+    Write-Host "  ✓ Symlinked $fname" -ForegroundColor Green
 }
-cmd /c mklink "$ESPANSO_MATCH\base.yml" "$DOTFILES\base.yml" 2>$null
-Write-Host "  ✓ Symlink created" -ForegroundColor Green
 
-# ── 6. Clipboard backend ──────────────────────────────────────────────────────
+# ── 7. Clipboard backend ──────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "▶ Configuring espanso..." -ForegroundColor Yellow
 if (-not (Test-Path $ESPANSO_CONFIG)) { New-Item -ItemType Directory -Path $ESPANSO_CONFIG | Out-Null }
@@ -101,7 +148,7 @@ if (-not (Test-Path $defaultYml)) {
 }
 Write-Host "  ✓ Clipboard backend set" -ForegroundColor Green
 
-# ── 7. Task Scheduler ─────────────────────────────────────────────────────────
+# ── 8. Task Scheduler ─────────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "▶ Setting up boot sync..." -ForegroundColor Yellow
 git config --global pull.rebase false
@@ -111,7 +158,7 @@ $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minu
 Register-ScheduledTask -TaskName "EspansoGitSync" -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -Force | Out-Null
 Write-Host "  ✓ Task scheduled" -ForegroundColor Green
 
-# ── 8. Desktop shortcut ───────────────────────────────────────────────────────
+# ── 9. Desktop shortcut ───────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "▶ Creating desktop shortcut..." -ForegroundColor Yellow
 $WshShell = New-Object -ComObject WScript.Shell
