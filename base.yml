@@ -1,1 +1,9 @@
 matches:
+- trigger: ":name"
+  replace: Your Name
+- trigger: ":email"
+  replace: your@email.com
+- trigger: ":addr"
+  replace: 123 Example Street, City, Country
+- trigger: ":ty"
+  replace: Thank you for reaching out!

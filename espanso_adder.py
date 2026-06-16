@@ -3,9 +3,10 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 import subprocess
 import os
+import sys
 import threading
-import re
 import platform
+import yaml
 
 IS_WINDOWS = platform.system() == "Windows"
 
@@ -16,10 +17,6 @@ else:
 
 DOTFILES_DIR = os.path.expanduser("~/dotfiles")
 
-SPECIAL_CHARS = ('@', ':', '#', '&', '*', '?', '|', '<', '>', '=', '!', '%', ',', '[', ']', '{', '}')
-
-def needs_quotes(s):
-    return s.startswith(SPECIAL_CHARS)
 
 def get_group_files():
     files = {}
@@ -35,12 +32,13 @@ def load_snippets_from_file(path):
     try:
         real = os.path.realpath(path)
         with open(real, "r", encoding="utf-8") as f:
-            content = f.read()
-        blocks = re.findall(r'-\s+trigger:\s*["\']?(.+?)["\']?\n\s+replace:\s*["\']?(.+?)["\']?\s*\n', content)
-        for trigger, replace in blocks:
-            snippets.append((trigger.strip().strip('"\''), replace.strip().strip('"\'') ))
-    except:
-        pass
+            data = yaml.safe_load(f)
+        if data and "matches" in data and data["matches"]:
+            for entry in data["matches"]:
+                if "trigger" in entry and "replace" in entry:
+                    snippets.append((str(entry["trigger"]), str(entry["replace"])))
+    except Exception as e:
+        print(f"Warning: could not load {path}: {e}", file=sys.stderr)
     return snippets
 
 def load_all_snippets():
@@ -52,13 +50,9 @@ def load_all_snippets():
 
 def save_snippets_to_file(path, snippets):
     real = os.path.realpath(path)
-    lines = ["matches:\n"]
-    for trigger, replace in snippets:
-        t = f'"{trigger}"' if needs_quotes(trigger) else trigger
-        r = f'"{replace}"' if needs_quotes(replace) else replace
-        lines.append(f"- trigger: {t}\n  replace: {r}\n")
+    data = {"matches": [{"trigger": t, "replace": r} for t, r in snippets]}
     with open(real, "w", encoding="utf-8") as f:
-        f.writelines(lines)
+        yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
 def save_all_snippets(all_snippets):
     groups = {}
@@ -71,17 +65,29 @@ def save_all_snippets(all_snippets):
             group_files[group] = path
             # Also symlink to espanso match dir
             link = os.path.join(MATCH_DIR, f"{group}.yml")
-            if not os.path.exists(link):
-                if IS_WINDOWS:
-                    subprocess.run(f'cmd /c mklink "{link}" "{path}"', shell=True)
-                else:
-                    os.symlink(path, link)
+            ensure_symlink(path, link)
         save_snippets_to_file(group_files[group], snippets)
     # Clear groups that are now empty
     for group, path in group_files.items():
         if group not in groups:
             save_snippets_to_file(path, [])
 
+def ensure_symlink(path, link):
+    """Create a symlink at `link` pointing to `path`, replacing broken symlinks."""
+    if os.path.lexists(link):
+        if os.path.islink(link) and not os.path.exists(link):
+            # Dangling symlink — remove and recreate
+            os.remove(link)
+        else:
+            return True, ""
+    if IS_WINDOWS:
+        result = subprocess.run(f'cmd /c mklink "{link}" "{path}"', shell=True,
+                                capture_output=True, text=True)
+        if result.returncode != 0:
+            return False, f"Could not create symlink: {result.stderr.strip()}"
+    else:
+        os.symlink(path, link)
+    return True, ""
 def create_group_file(name):
     path = os.path.join(DOTFILES_DIR, f"{name}.yml")
     if os.path.exists(path):
@@ -89,11 +95,9 @@ def create_group_file(name):
     with open(path, "w", encoding="utf-8") as f:
         f.write("matches:\n")
     link = os.path.join(MATCH_DIR, f"{name}.yml")
-    if not os.path.exists(link):
-        if IS_WINDOWS:
-            subprocess.run(f'cmd /c mklink "{link}" "{path}"', shell=True)
-        else:
-            os.symlink(path, link)
+    ok, err = ensure_symlink(path, link)
+    if not ok:
+        return False, f"Group file created but symlink failed: {err}"
     return True, ""
 
 def delete_group_file(name):
@@ -109,7 +113,7 @@ def delete_group_file(name):
 
 # ── Git ──────────────────────────────────────────────────────────────────────
 
-def show_toast(message, color="#4caf50"):
+def show_toast(root, message, color="#4caf50"):
     toast = tk.Toplevel(root)
     toast.overrideredirect(True)
     toast.configure(bg="#313244")
@@ -121,7 +125,7 @@ def show_toast(message, color="#4caf50"):
              bg="#313244", fg=color, pady=18).pack(expand=True)
     toast.after(1500, toast.destroy)
 
-def git_sync(on_done, status_lbl, btn_ref):
+def git_sync(root, on_done, status_lbl, btn_ref):
     status_lbl.config(text="Pushing to GitHub...", fg="#f0a500")
     dotfiles = os.path.expanduser("~/dotfiles")
     if IS_WINDOWS:
@@ -134,15 +138,15 @@ def git_sync(on_done, status_lbl, btn_ref):
     if result.returncode == 0:
         subprocess.Popen(restart_cmd, shell=True, start_new_session=True,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        root.after(0, lambda: on_done(True, btn_ref, status_lbl))
+        root.after(0, lambda: on_done(root, True, btn_ref, status_lbl))
     else:
-        root.after(0, lambda: on_done(False, btn_ref, status_lbl))
+        root.after(0, lambda: on_done(root, False, btn_ref, status_lbl))
 
-def on_sync_done(success, btn_ref, status_lbl):
+def on_sync_done(root, success, btn_ref, status_lbl):
     btn_ref.config(state="normal")
     if success:
         status_lbl.config(text="✓ Synced!", fg="#4caf50")
-        show_toast("✓ saved!")
+        show_toast(root, "✓ saved!")
     else:
         status_lbl.config(text="✗ Sync failed.", fg="#f44336")
         messagebox.showerror("Git error", "Could not push to GitHub.\nCheck your connection.")
@@ -259,7 +263,7 @@ def do_add():
     save_all_snippets(all_snippets)
     add_btn.config(state="disabled", text="Syncing...")
     add_status.config(text="Pushing to GitHub...", fg=AMBER)
-    threading.Thread(target=git_sync, args=(on_sync_done, add_status, add_btn), daemon=True).start()
+    threading.Thread(target=git_sync, args=(root, on_sync_done, add_status, add_btn), daemon=True).start()
     trigger_entry.delete(0, tk.END)
     replace_text.delete("1.0", tk.END)
 
@@ -421,7 +425,7 @@ def do_save_edit():
     save_all_snippets(all_snippets_cache)
     refresh_list()
     save_btn.config(state="disabled")
-    threading.Thread(target=git_sync, args=(on_sync_done, mgmt_status, save_btn), daemon=True).start()
+    threading.Thread(target=git_sync, args=(root, on_sync_done, mgmt_status, save_btn), daemon=True).start()
 
 def do_delete():
     sel = snippet_list.curselection()
@@ -444,7 +448,7 @@ def do_delete():
     edit_trigger.delete(0, tk.END)
     edit_replace.delete(0, tk.END)
     delete_btn.config(state="disabled")
-    threading.Thread(target=git_sync, args=(on_sync_done, mgmt_status, delete_btn), daemon=True).start()
+    threading.Thread(target=git_sync, args=(root, on_sync_done, mgmt_status, delete_btn), daemon=True).start()
 
 save_btn = tk.Button(btn_row, text="SAVE EDIT →", font=FONT_B,
                      bg=ACCENT, fg=BG, relief="flat", bd=0, padx=10, pady=5,
@@ -504,7 +508,7 @@ def do_create_group():
     new_group_entry.delete(0, tk.END)
     refresh_groups()
     g_status.config(text=f"✓ Group '{name}' created", fg=GREEN)
-    threading.Thread(target=git_sync, args=(on_sync_done, g_status, create_btn), daemon=True).start()
+    threading.Thread(target=git_sync, args=(root, on_sync_done, g_status, create_btn), daemon=True).start()
 
 def do_delete_group():
     sel = groups_listbox.curselection()
@@ -525,7 +529,7 @@ def do_delete_group():
     refresh_groups()
     g_status.config(text=f"✓ Group '{name}' deleted", fg=GREEN)
     delete_g_btn.config(state="disabled")
-    threading.Thread(target=git_sync, args=(on_sync_done, g_status, delete_g_btn), daemon=True).start()
+    threading.Thread(target=git_sync, args=(root, on_sync_done, g_status, delete_g_btn), daemon=True).start()
 
 create_btn = tk.Button(g_btn_row, text="CREATE GROUP →", font=FONT_B,
                        bg=ACCENT, fg=BG, relief="flat", bd=0, padx=10, pady=5,

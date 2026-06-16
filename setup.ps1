@@ -5,15 +5,13 @@ Write-Host "║       ESPANSO SETUP - WINDOWS        ║" -ForegroundColor Cyan
 Write-Host "╚══════════════════════════════════════╝" -ForegroundColor Cyan
 Write-Host ""
 
-$GITHUB_USER = Read-Host "GitHub username"
-$REPO = Read-Host "GitHub repo name (e.g. espanso_sync)"
-
+$GITHUB_USER = "mdragusm"
+$REPO = "espanso_sync"
 $DOTFILES = "$env:USERPROFILE\dotfiles"
 $ESPANSO_MATCH = "$env:APPDATA\espanso\match"
 $ESPANSO_CONFIG = "$env:APPDATA\espanso\config"
 
 # ── 1. Install dependencies ───────────────────────────────────────────────────
-Write-Host ""
 Write-Host "▶ Installing Git..." -ForegroundColor Yellow
 winget install --id Git.Git -e --silent --accept-source-agreements --accept-package-agreements
 Write-Host "  ✓ Git installed" -ForegroundColor Green
@@ -26,7 +24,12 @@ Write-Host "▶ Installing Python..." -ForegroundColor Yellow
 winget install --id Python.Python.3 -e --silent --accept-source-agreements --accept-package-agreements
 Write-Host "  ✓ Python installed" -ForegroundColor Green
 
+# Refresh PATH so pip is available
 $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+
+Write-Host "▶ Installing PyYAML..." -ForegroundColor Yellow
+pip install pyyaml --quiet
+Write-Host "  ✓ PyYAML installed" -ForegroundColor Green
 
 # ── 2. SSH key ────────────────────────────────────────────────────────────────
 Write-Host ""
