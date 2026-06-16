@@ -2,7 +2,12 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Personal snippet files - commit only base.yml and group files you want synced.
+# PyInstaller build artifacts
+dist/
+build/
+*.spec
+
+# Personal snippet files — commit only files you want synced.
 # If any group files contain PII (emails, phone numbers, addresses), list them here.
 # Example:
 # pii.yml

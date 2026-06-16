@@ -107,6 +107,26 @@ matches:
 
 ---
 
+## Building a standalone executable
+
+If you can't or don't want to install Python on a machine, you can build a standalone executable on any machine that has Python and then copy it over.
+
+**Windows:**
+```powershell
+.\build.ps1
+```
+
+**Linux:**
+```bash
+bash build.sh
+```
+
+The executable will appear in the `dist/` folder. Copy `EspansoManager.exe` (Windows) or `EspansoManager` (Linux) anywhere and run it directly — no Python or dependencies needed on the target machine.
+
+> Note: the executable must be built on the same OS you want to run it on. A Windows `.exe` won't run on Linux and vice versa.
+
+---
+
 ## Troubleshooting
 
 **Manager won't launch**
